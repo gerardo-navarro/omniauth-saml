@@ -269,102 +269,283 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
     end
 
-    context "when response is a logout response" do
-      before :each do
-        saml_options[:sp_entity_id] = "https://idp.sso.example.com/metadata/29490"
+    context "when single logout is disabled" do
+      it "returns not implemented for slo" do
+        post "/auth/saml/slo"
 
-        post "/auth/saml/slo", {
-          SAMLResponse: load_xml(:example_logout_response),
-          RelayState: "https://example.com/",
-        }, "rack.session" => {"saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9"}
+        expect(last_response.status).to eq 501
+        expect(last_response.body).to include("Not Implemented")
       end
-      it "should redirect to relaystate" do
-        expect(last_response).to be_redirect
-        expect(last_response.location).to match /https:\/\/example.com\//
+
+      it "returns not implemented for spslo" do
+        post "/auth/saml/spslo"
+
+        expect(last_response.status).to eq 501
+        expect(last_response.body).to include("Not Implemented")
       end
     end
 
-    context "when request is a logout request" do
-      subject { post "/auth/saml/slo", params, "rack.session" => { "saml_uid" => "username@example.com" } }
+  end
 
-      before :each do
-        saml_options[:sp_entity_id] = "https://idp.sso.example.com/metadata/29490"
+  describe 'SLO endpoint' do
+    before do
+      saml_options[:sp_entity_id] = "https://idp.sso.example.com/metadata/29490"
+    end
+
+    describe 'handling logout responses' do
+      let(:session_env) do
+        { "rack.session" => { "saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9" } }
       end
 
       let(:params) do
         {
-          "SAMLRequest" => load_xml(:example_logout_request),
-          "RelayState" => "https://example.com/",
+          SAMLResponse: load_xml(:example_logout_response),
+          RelayState: relay_state,
         }
       end
 
-      context "when logout request is valid" do
-        before { subject }
+      let(:relay_state) { "/signed-out" }
 
-        it "should redirect to logout response" do
+      before do
+        saml_options[:slo_enabled] = true
+      end
+
+      subject(:perform_request) { post "/auth/saml/slo", params, session_env }
+
+      context 'with a local relay state' do
+        let(:relay_state) { "/signed-out?tab=issues#anchor" }
+
+        it 'redirects to the sanitized value' do
+          perform_request
+
           expect(last_response).to be_redirect
-          expect(last_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
-          expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
+          expect(last_response.location).to end_with("/signed-out?tab=issues#anchor")
         end
       end
 
-      context "when request is an invalid logout request" do
-        before :each do
-          allow_any_instance_of(OneLogin::RubySaml::SloLogoutrequest).to receive(:is_valid?).and_return(false)
-          allow_any_instance_of(OneLogin::RubySaml::SloLogoutrequest).to receive(:errors).and_return(['Blank logout request'])
+      context 'with an unsafe relay state' do
+        let(:relay_state) { "https://example.com/" }
+
+        it 'falls back to the configured default' do
+          saml_options[:slo_default_relay_state] = "/signed-out"
+
+          perform_request
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to end_with("/signed-out")
         end
 
-        # TODO: Maybe this should not raise an exception, but return some 4xx error instead?
-        it "should raise an exception" do
-          expect { subject }.
-            to raise_error(OmniAuth::Strategies::SAML::ValidationError, 'SAML failed to process LogoutRequest (Blank logout request)')
+        it 'falls back to root when no default is configured' do
+          perform_request
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to end_with("/")
         end
       end
 
-      context "when request is a logout request but the request param is missing" do
-        let(:params) { {} }
+      context 'with a custom validator' do
+        let(:relay_state) { "pending" }
 
-        # TODO: Maybe this should not raise an exception, but return a 422 error instead?
-        it 'should raise an exception' do
-          expect { subject }.
-            to raise_error(OmniAuth::Strategies::SAML::ValidationError, 'SAML logout response/request missing')
+        it 'uses the validator return value' do
+          saml_options[:slo_relay_state_validator] = lambda do |value|
+            value == "pending" ? "/custom" : nil
+          end
+
+          perform_request
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to end_with("/custom")
+        end
+
+        it 'passes the request when the validator expects it' do
+          captured = []
+          saml_options[:slo_relay_state_validator] = lambda do |value, rack_request|
+            captured << [value, rack_request.path]
+            "/custom"
+          end
+
+          perform_request
+
+          expect(captured).to eq([["pending", "/auth/saml/slo"]])
         end
       end
     end
 
-    context "when sp initiated SLO" do
-      def test_default_relay_state(static_default_relay_state = nil, &block_default_relay_state)
-        saml_options["slo_default_relay_state"] = static_default_relay_state || block_default_relay_state
-        post "/auth/saml/spslo"
-
-        expect(last_response).to be_redirect
-        expect(last_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
-        expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
+    describe 'handling logout requests' do
+      let(:params) do
+        {
+          "SAMLRequest" => load_xml(:example_logout_request),
+          "RelayState" => relay_state,
+        }
       end
 
-      it "should redirect to logout request" do
-        test_default_relay_state("https://example.com/")
+      let(:relay_state) { "/signed-out" }
+
+      before do
+        saml_options[:slo_enabled] = true
       end
 
-      it "should redirect to logout request with a block" do
-        test_default_relay_state do
-          "https://example.com/"
+      subject(:perform_request) { post "/auth/saml/slo", params, "rack.session" => { "saml_uid" => "username@example.com" } }
+
+      context 'when logout request is valid' do
+        before { perform_request }
+
+        it 'redirects to the logout response' do
+          expect(last_response).to be_redirect
+          expect(last_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
+          expect(last_response.location).to match /RelayState=%2Fsigned-out/
         end
       end
 
-      it "should redirect to logout request with a block with a request parameter" do
-        test_default_relay_state do |request|
-          "https://example.com/"
+      context 'when relay state is unsafe' do
+        let(:relay_state) { "https://example.com/" }
+
+        before do
+          saml_options["slo_default_relay_state"] = "/signed-out"
+        end
+
+        it 'falls back to the configured default' do
+          perform_request
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to match /RelayState=%2Fsigned-out/
         end
       end
 
-      it "should give not implemented without an idp_slo_service_url" do
-        saml_options.delete(:idp_slo_service_url)
-        post "/auth/saml/spslo"
+      context 'with a custom validator' do
+        let(:relay_state) { "pending" }
 
-        expect(last_response.status).to eq 501
-        expect(last_response.body).to match /Not Implemented/
+        it 'uses the validator return value' do
+          saml_options[:slo_relay_state_validator] = lambda do |value|
+            value == "pending" ? "/custom" : nil
+          end
+
+          perform_request
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to match /RelayState=%2Fcustom/
+        end
+
+        it 'allows request-aware validators' do
+          captured = []
+          saml_options[:slo_relay_state_validator] = lambda do |value, rack_request|
+            captured << [value, rack_request.path]
+            "/custom"
+          end
+
+          perform_request
+
+          expect(captured).to eq([["pending", "/auth/saml/slo"]])
+        end
       end
+
+      context 'when request is invalid' do
+        before do
+          allow_any_instance_of(OneLogin::RubySaml::SloLogoutrequest).to receive(:is_valid?).and_return(false)
+          allow_any_instance_of(OneLogin::RubySaml::SloLogoutrequest).to receive(:errors).and_return(['Blank logout request'])
+        end
+
+        it 'raises a validation error' do
+          expect { perform_request }.
+            to raise_error(OmniAuth::Strategies::SAML::ValidationError, 'SAML failed to process LogoutRequest (Blank logout request)')
+        end
+      end
+
+      context 'when the request param is missing' do
+        let(:params) { {} }
+
+        it 'raises a validation error' do
+          expect { perform_request }.
+            to raise_error(OmniAuth::Strategies::SAML::ValidationError, 'SAML logout response/request missing')
+        end
+      end
+    end
+  end
+
+  describe 'SP-SLO endpoint' do
+    before do
+      saml_options[:slo_enabled] = true
+    end
+
+    def test_default_relay_state(static_default_relay_state = nil, &block_default_relay_state)
+      saml_options["slo_default_relay_state"] = static_default_relay_state || block_default_relay_state
+      post "/auth/saml/spslo"
+
+      expect(last_response).to be_redirect
+      expect(last_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
+      expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
+    end
+
+    it 'redirects to logout request when default is static' do
+      test_default_relay_state("https://example.com/")
+    end
+
+    it 'redirects to logout request when default is a block' do
+      test_default_relay_state do
+        "https://example.com/"
+      end
+    end
+
+    it 'redirects to logout request when default block expects the request' do
+      test_default_relay_state do |request|
+        expect(request).to be_a(Rack::Request)
+        "https://example.com/"
+      end
+    end
+
+    it 'falls back to the default when relay state is unsafe' do
+      saml_options["slo_default_relay_state"] = "/signed-out"
+      post "/auth/saml/spslo", { "RelayState" => "https://attacker.test" }
+
+      expect(last_response).to be_redirect
+      expect(last_response.location).to match /RelayState=%2Fsigned-out/
+    end
+
+    it 'passes through sanitized local relay state' do
+      post "/auth/saml/spslo", { "RelayState" => "/projects/1?tab=issues#anchor" }
+
+      expect(last_response).to be_redirect
+      expect(last_response.location).to match(/RelayState=%2Fprojects%2F1%3Ftab%3Dissues%23anchor/)
+    end
+
+    it 'falls back to root when relay state is blank' do
+      post "/auth/saml/spslo", { "RelayState" => "   " }
+
+      expect(last_response).to be_redirect
+      expect(last_response.location).to match(/RelayState=%2F/)
+    end
+
+    it 'honours a custom validator return value' do
+      saml_options[:slo_relay_state_validator] = lambda do |value|
+        value == "projects" ? "#user-projects" : nil
+      end
+
+      post "/auth/saml/spslo", { "RelayState" => "projects" }
+
+      expect(last_response).to be_redirect
+      expect(last_response.location).to match(/RelayState=%23user-projects/)
+    end
+
+    it 'passes the request to validators that expect it' do
+      captures = []
+      saml_options[:slo_relay_state_validator] = lambda do |value, rack_request|
+        captures << [value, rack_request.path]
+        "/custom#{rack_request.path_info}"
+      end
+
+      post "/auth/saml/spslo", { "RelayState" => "pending" }
+
+      expect(last_response).to be_redirect
+      expect(last_response.location).to match(/RelayState=%2Fcustom%2Fauth%2Fsaml%2Fspslo/)
+      expect(captures).to eq([["pending", "/auth/saml/spslo"]])
+    end
+
+    it 'returns not implemented without an idp_slo_service_url' do
+      saml_options.delete(:idp_slo_service_url)
+      post "/auth/saml/spslo"
+
+      expect(last_response.status).to eq 501
+      expect(last_response.body).to include("Not Implemented")
     end
   end
 

@@ -1,5 +1,6 @@
 require 'omniauth'
 require 'ruby-saml'
+require 'uri'
 
 module OmniAuth
   module Strategies
@@ -28,6 +29,8 @@ module OmniAuth
         last_name: ["last_name", "lastname", "lastName"]
       }
       option :slo_default_relay_state
+      option :slo_relay_state_validator
+      option :slo_enabled, false
       option :uid_attribute
       option :idp_slo_session_destroy, proc { |_env, session| session.clear }
 
@@ -73,8 +76,12 @@ module OmniAuth
           if on_subpath?(:metadata)
             other_phase_for_metadata
           elsif on_subpath?(:slo)
+            return slo_disabled_response unless slo_enabled?
+
             other_phase_for_slo
           elsif on_subpath?(:spslo)
+            return slo_disabled_response unless slo_enabled?
+
             other_phase_for_spslo
           else
             call_app!
@@ -142,20 +149,14 @@ module OmniAuth
       end
 
       def slo_relay_state
-        if request.params.has_key?("RelayState") && request.params["RelayState"] != ""
-          request.params["RelayState"]
-        else
-          slo_default_relay_state = options.slo_default_relay_state
-          if slo_default_relay_state.respond_to?(:call)
-            if slo_default_relay_state.arity == 1
-              slo_default_relay_state.call(request)
-            else
-              slo_default_relay_state.call
-            end
-          else
-            slo_default_relay_state
-          end
+        raw_relay_state = request.params["RelayState"]
+
+        if raw_relay_state && !raw_relay_state.empty?
+          sanitized = validate_slo_relay_state(raw_relay_state)
+          return sanitized if sanitized
         end
+
+        resolve_slo_default_relay_state || '/'
       end
 
       def handle_logout_response(raw_response, settings)
@@ -266,6 +267,85 @@ module OmniAuth
         options.request_attributes.each do |attribute|
           settings.attribute_consuming_service.add_attribute attribute
         end
+      end
+
+      def slo_enabled?
+        !!options[:slo_enabled]
+      end
+
+      def slo_disabled_response
+        Rack::Response.new("Not Implemented", 501, { "Content-Type" => "text/html" }).finish
+      end
+
+      def resolve_slo_default_relay_state
+        slo_default_relay_state = options.slo_default_relay_state
+        return slo_default_relay_state unless slo_default_relay_state.respond_to?(:call)
+
+        if slo_default_relay_state.arity == 1
+          slo_default_relay_state.call(request)
+        else
+          slo_default_relay_state.call
+        end
+      end
+
+      def sanitize_relay_state(relay_state)
+        sanitized_relay_state = relay_state.to_s.strip
+        return nil if sanitized_relay_state.empty?
+
+        # Protocol-relative URLs would resolve against the IdP domain rather than the app.
+        return nil if sanitized_relay_state.start_with?('//')
+
+        return sanitized_relay_state if sanitized_relay_state.start_with?('#')
+        return sanitized_relay_state if sanitized_relay_state.start_with?('?')
+
+        uri = URI.parse(sanitized_relay_state)
+
+        # Reject absolute URLs so SLO redirects stay within the service provider.
+        return nil if uri.scheme || uri.host
+
+        path = uri.path
+
+        if (path.nil? || path.empty?) && (uri.query || uri.fragment)
+          # Accept query/fragment-only values by treating them as relative to the root path.
+          path = '/'
+        end
+
+        return nil unless path&.start_with?('/')
+
+        sanitized = String.new(path)
+        sanitized << "?#{uri.query}" if uri.query
+        sanitized << "##{uri.fragment}" if uri.fragment
+        sanitized
+      rescue URI::Error
+        nil
+      end
+
+      def validate_slo_relay_state(relay_state)
+        return nil if relay_state.nil?
+
+        if (custom_validator = options[:slo_relay_state_validator])
+          validated = apply_relay_state_validator(custom_validator, relay_state)
+          return validated if validated
+        end
+
+        sanitize_relay_state(relay_state)
+      end
+
+      def apply_relay_state_validator(validator, relay_state)
+        return nil unless validator.respond_to?(:call)
+
+        sanitized = if validator.arity == 2
+                      validator.call(relay_state, request)
+                    else
+                      validator.call(relay_state)
+                    end
+
+        return nil if sanitized.nil?
+
+        sanitized_value = sanitized.to_s.strip
+        return nil if sanitized_value.empty?
+
+        sanitized_value
       end
 
       def additional_params_for_authn_request
