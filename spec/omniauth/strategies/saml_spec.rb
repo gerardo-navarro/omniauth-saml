@@ -291,47 +291,47 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
 
     end
 
-      context "when response relay state is invalid" do
-        let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
-        let(:params) do
-          {
-            SAMLResponse: load_xml(:example_logout_response),
-            RelayState: "https://example.com/",
-          }
-        end
+    context "when response relay state is invalid" do
+      let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
+      let(:params) do
+        {
+          SAMLResponse: load_xml(:example_logout_response),
+          RelayState: "https://example.com/",
+        }
+      end
 
-        let(:opts) do
-          {"rack.session" => {"saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9"}}
-        end
+      let(:opts) do
+        { "rack.session" => { "saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9" } }
+      end
 
-        subject { post "/auth/saml/slo", params, opts }
+      subject { post "/auth/saml/slo", params, opts }
 
-        [
-          "//attacker.test",
-          "javascript:alert(1)",
-        ].each do |unsafe_relay_state|
-          context "#{unsafe_relay_state}"  do
-            let(:params) { super().merge(RelayState: unsafe_relay_state)}
+      [
+        "//attacker.test",
+        "javascript:alert(1)",
+      ].each do |unsafe_relay_state|
+        context "#{unsafe_relay_state}"  do
+          let(:params) { super().merge(RelayState: unsafe_relay_state)}
 
-            it 'falls back to the default' do
-              is_expected.to be_redirect.and have_attributes(location: "/signed-out")
-            end
+          it 'falls back to the default' do
+            is_expected.to be_redirect.and have_attributes(location: "/signed-out")
           end
         end
-
-        context 'when absolute https relay state' do
-          let(:params) { super().merge(RelayState: "https://example.com/logout")}
-
-          it { is_expected.to be_redirect.and have_attributes(location: "https://example.com/logout") }
-        end
-
-        context 'when there is no safe fallback' do
-          let(:saml_options) { super().except(:slo_default_relay_state) }
-          let(:params) { super().merge(RelayState: 'javascript:alert(1)')}
-
-          it { expect { subject }.to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState") }
-        end
       end
+
+      context 'when absolute https relay state' do
+        let(:params) { super().merge(RelayState: "https://example.com/logout")}
+
+        it { is_expected.to be_redirect.and have_attributes(location: "https://example.com/logout") }
+      end
+
+      context 'when there is no safe fallback' do
+        let(:saml_options) { super().except(:slo_default_relay_state) }
+        let(:params) { super().merge(RelayState: 'javascript:alert(1)')}
+
+        it { expect { subject }.to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState") }
+      end
+    end
 
 
     context "when request is a logout request" do
