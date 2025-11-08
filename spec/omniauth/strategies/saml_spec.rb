@@ -114,22 +114,19 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
   end
 
   describe 'POST /auth/saml/callback' do
-    subject { last_response }
-
-    let(:xml) { :example_response }
-
-    def post_xml(xml = :example_response, opts = {})
-      post "/auth/saml/callback", opts.merge({'SAMLResponse' => load_xml(xml)})
+    subject(:post_callback_response) do
+      post "/auth/saml/callback", params
+      last_response
     end
+
+    let(:params) { { 'SAMLResponse' => load_xml(:example_response) } }
 
     before :each do
       allow(Time).to receive(:now).and_return(Time.utc(2012, 11, 8, 20, 40, 00))
     end
 
     context "when the response is valid" do
-      before :each do
-        post_xml
-      end
+      before { post_callback_response }
 
       it "should set the uid to the nameID in the SAML response" do
         expect(auth_hash['uid']).to eq '_1f6fcf6be5e13b08b1e3610e7ff59f205fbd814f23'
@@ -154,24 +151,23 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       before :each do
         saml_options.delete(:assertion_consumer_service_url)
         OmniAuth.config.full_host = 'http://localhost:9080'
-        post_xml
+        post_callback_response
       end
 
       it { is_expected.not_to fail_with(:invalid_ticket) }
     end
 
     context "when there is no SAMLResponse parameter" do
-      before :each do
-        post '/auth/saml/callback'
-      end
+      let(:params) { {} }
 
       it { is_expected.to fail_with(:invalid_ticket) }
     end
 
     context "when there is no name id in the XML" do
+      let(:params) { { 'SAMLResponse' => load_xml(:no_name_id) } }
+
       before :each do
         allow(Time).to receive(:now).and_return(Time.utc(2012, 11, 8, 23, 55, 00))
-        post_xml :no_name_id
       end
 
       it { is_expected.to fail_with(:invalid_ticket) }
@@ -180,24 +176,24 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     context "when the fingerprint is invalid" do
       before :each do
         saml_options[:idp_cert_fingerprint] = "00:00:00:00:00:0C:6C:A9:41:0F:6E:83:F6:D1:52:25:45:58:89:FB"
-        post_xml
+        post_callback_response
       end
 
       it { is_expected.to fail_with(:invalid_ticket) }
     end
 
     context "when the digest is invalid" do
-      before :each do
-        post_xml :digest_mismatch
-      end
+      let(:params) { { 'SAMLResponse' => load_xml(:digest_mismatch) } }
+
+      before { post_callback_response }
 
       it { is_expected.to fail_with(:invalid_ticket) }
     end
 
     context "when the signature is invalid" do
-      before :each do
-        post_xml :invalid_signature
-      end
+      let(:params) { { 'SAMLResponse' => load_xml(:invalid_signature) } }
+
+      before { post_callback_response }
 
       it { is_expected.to fail_with(:invalid_ticket) }
     end
@@ -208,7 +204,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
 
       context "without :allowed_clock_drift option" do
-        before { post_xml :example_response }
+        before { post_callback_response }
 
         it { is_expected.to fail_with(:invalid_ticket) }
       end
@@ -216,7 +212,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       context "with :allowed_clock_drift option" do
         before :each do
           saml_options[:allowed_clock_drift] = 60
-          post_xml :example_response
+          post_callback_response
         end
 
         it { is_expected.to_not fail_with(:invalid_ticket) }
@@ -224,6 +220,8 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     end
 
     context "when response has custom attributes" do
+      let(:params) { { 'SAMLResponse' => load_xml(:custom_attributes) } }
+
       before :each do
         saml_options[:idp_cert_fingerprint] = "3B:82:F1:F5:54:FC:A8:FF:12:B8:4B:B8:16:61:1D:E4:8E:9B:E2:3C"
         saml_options[:attribute_statements] = {
@@ -231,7 +229,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
           first_name: ["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname"],
           last_name: ["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname"]
         }
-        post_xml :custom_attributes
+        post_callback_response
       end
 
       it "should obey attribute statements mapping" do
@@ -245,10 +243,12 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     end
 
     context "when using custom user id attribute" do
+      let(:params) { { 'SAMLResponse' => load_xml(:custom_attributes) } }
+
       before :each do
         saml_options[:idp_cert_fingerprint] = "3B:82:F1:F5:54:FC:A8:FF:12:B8:4B:B8:16:61:1D:E4:8E:9B:E2:3C"
         saml_options[:uid_attribute] = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
-        post_xml :custom_attributes
+        post_callback_response
       end
 
       it "should return user id attribute" do
@@ -259,7 +259,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     context "when using custom user id attribute, but it is missing" do
       before :each do
         saml_options[:uid_attribute] = "missing_attribute"
-        post_xml
+        post_callback_response
       end
 
       it "should fail to authenticate" do
@@ -271,8 +271,14 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
   end
 
   describe 'POST /auth/saml/slo' do
-    subject { post "/auth/saml/slo", params, opts}
-    
+    subject(:post_slo_response) do
+      post "/auth/saml/slo", params, opts
+      last_response
+    end
+
+    let(:params) { {} }
+    let(:opts) { {} }
+
     before do
       saml_options[:sp_entity_id] = "https://idp.sso.example.com/metadata/29490"
     end
@@ -285,21 +291,17 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
         }
       end
       let(:opts) do
-        "rack.session" => {"saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9"}
-      end
-      
-      before :each do
-        subject
+        { "rack.session" => {"saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9"} }
       end
 
       it "should redirect to relaystate" do
-        expect(last_response).to be_redirect
-        expect(last_response.location).to match /https:\/\/example.com\//
+        expect(post_slo_response).to be_redirect
+        expect(post_slo_response.location).to match /https:\/\/example.com\//
       end
     end
 
     context "when request is a logout request" do
-      subject { post "/auth/saml/slo", params, "rack.session" => { "saml_uid" => "username@example.com" } }
+      let(:opts) { { "rack.session" => { "saml_uid" => "username@example.com" } } }
 
       let(:params) do
         {
@@ -309,12 +311,10 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
 
       context "when logout request is valid" do
-        before { subject }
-
         it "should redirect to logout response" do
-          expect(last_response).to be_redirect
-          expect(last_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
-          expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
+          expect(post_slo_response).to be_redirect
+          expect(post_slo_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
+          expect(post_slo_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
         end
       end
 
@@ -326,7 +326,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
 
         # TODO: Maybe this should not raise an exception, but return some 4xx error instead?
         it "should raise an exception" do
-          expect { subject }.
+          expect { post_slo_response }.
             to raise_error(OmniAuth::Strategies::SAML::ValidationError, 'SAML failed to process LogoutRequest (Blank logout request)')
         end
       end
@@ -336,7 +336,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
 
         # TODO: Maybe this should not raise an exception, but return a 422 error instead?
         it 'should raise an exception' do
-          expect { subject }.
+          expect { post_slo_response }.
             to raise_error(OmniAuth::Strategies::SAML::ValidationError, 'SAML logout response/request missing')
         end
       end
@@ -345,59 +345,76 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     context "when SLO is disabled" do
       before do
         saml_options[:slo_enabled] = false
-        post "/auth/saml/slo"
       end
 
       it "should return not implemented" do
-        expect(last_response.status).to eq 501
-        expect(last_response.body).to eq "Not Implemented"
+        expect(post_slo_response.status).to eq 501
+        expect(post_slo_response.body).to eq "Not Implemented"
       end
     end
   end
 
   describe 'POST /auth/saml/spslo' do
-    def test_default_relay_state(static_default_relay_state = nil, &block_default_relay_state)
-      saml_options["slo_default_relay_state"] = static_default_relay_state || block_default_relay_state
+    subject(:post_sp_slo_response) do
       post "/auth/saml/spslo"
-
-      expect(last_response).to be_redirect
-      expect(last_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
-      expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
+      last_response
     end
 
-    it "should redirect to logout request" do
-      test_default_relay_state("https://example.com/")
-    end
+    context "with a static default relay state" do
+      before do
+        saml_options["slo_default_relay_state"] = "https://example.com/"
+      end
 
-    it "should redirect to logout request with a block" do
-      test_default_relay_state do
-        "https://example.com/"
+      it "redirects to logout request" do
+        expect(post_sp_slo_response).to be_redirect
+        expect(post_sp_slo_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
+        expect(post_sp_slo_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
       end
     end
 
-    it "should redirect to logout request with a block with a request parameter" do
-      test_default_relay_state do |request|
-        "https://example.com/"
+    context "with a callable default relay state" do
+      before do
+        saml_options["slo_default_relay_state"] = proc { "https://example.com/" }
+      end
+
+      it "redirects to logout request" do
+        expect(post_sp_slo_response).to be_redirect
+        expect(post_sp_slo_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
+        expect(post_sp_slo_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
       end
     end
 
-    it "should give not implemented without an idp_slo_service_url" do
-      saml_options.delete(:idp_slo_service_url)
-      post "/auth/saml/spslo"
+    context "with a callable default relay state that accepts the request" do
+      before do
+        saml_options["slo_default_relay_state"] = proc { |request| "https://example.com/" }
+      end
 
-      expect(last_response.status).to eq 501
-      expect(last_response.body).to match /Not Implemented/
+      it "redirects to logout request" do
+        expect(post_sp_slo_response).to be_redirect
+        expect(post_sp_slo_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
+        expect(post_sp_slo_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
+      end
+    end
+
+    context "without an idp_slo_service_url" do
+      before do
+        saml_options.delete(:idp_slo_service_url)
+      end
+
+      it "returns not implemented" do
+        expect(post_sp_slo_response.status).to eq 501
+        expect(post_sp_slo_response.body).to match /Not Implemented/
+      end
     end
 
     context "when SLO is disabled" do
       before do
         saml_options[:slo_enabled] = false
-        post "/auth/saml/spslo"
       end
 
       it "should return not implemented" do
-        expect(last_response.status).to eq 501
-        expect(last_response.body).to eq "Not Implemented"
+        expect(post_sp_slo_response.status).to eq 501
+        expect(post_sp_slo_response.body).to eq "Not Implemented"
       end
     end
   end
