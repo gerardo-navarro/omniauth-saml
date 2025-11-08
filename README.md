@@ -101,7 +101,22 @@ Note that when [integrating with Devise](#devise-integration), the URL path will
 * `:slo_default_relay_state` - The value to use as default `RelayState` for single log outs. The
   value can be a string, or a `Proc` (or other object responding to `call`). The `request`
   instance will be passed to this callable if it has an arity of 1. If the value is a string,
-  the string will be returned, when the `RelayState` is called. Optional.
+  the string will be returned, when the `RelayState` is called. If no default is configured,
+  OmniAuth falls back to `/`. Optional.
+
+* `:slo_relay_state_validator` - A callable used to validate any RelayState before OmniAuth uses it for
+  redirects in Single Logout flows. The callable receives the RelayState value and, if it accepts a
+  second argument, the current Rack request. The default validator allows relative paths beginning
+  with `/` and absolute `http` or `https` URLs, and rejects invalid URIs, protocol-relative URLs, and
+  other schemes. Defaults generated via `:slo_default_relay_state` are assumed to be safe and skipped by
+  this validation step. When both a user-supplied RelayState and the configured default are rejected,
+  OmniAuth falls back to `/`. Optional.
+
+  ```ruby
+  config.omniauth :saml, slo_relay_state_validator: lambda { |relay_state|
+    relay_state&.start_with?("/")
+  }
+  ```
 
 * `:slo_enabled` - Enables or disables Single Logout (SLO). Set to `false` to disable SLO. Defaults to `true`. Optional.
 
