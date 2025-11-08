@@ -378,6 +378,21 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
           end
         end
 
+        context "when the validator rejects the default relay state" do
+          let(:relay_state) { "javascript:alert(1)" }
+
+          before do
+            saml_options[:slo_relay_state_validator] = proc { |value| value.start_with?("https://") }
+          end
+
+          it "still falls back to the configured default" do
+            subject
+
+            expect(last_response).to be_redirect
+            expect(last_response.location).to match /RelayState=%2Fsigned-out/
+          end
+        end
+
         context "when the relay state is an https URL" do
           let(:relay_state) { "https://example.com/logout" }
 
@@ -552,11 +567,14 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       expect(last_response.location).to match /RelayState=%2Fsigned-out/
     end
 
-    it "raises when the default relay state fails validation" do
-      saml_options[:slo_default_relay_state] = "javascript:alert(1)"
+    it "uses the configured default even when the validator would reject it" do
+      saml_options[:slo_default_relay_state] = "/signed-out"
+      saml_options[:slo_relay_state_validator] = proc { |value| value.start_with?("https://") }
 
-      expect { post "/auth/saml/spslo" }.
-        to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState")
+      post "/auth/saml/spslo", RelayState: "javascript:alert(1)"
+
+      expect(last_response).to be_redirect
+      expect(last_response.location).to match /RelayState=%2Fsigned-out/
     end
 
     it "raises when there is no safe relay state available" do
