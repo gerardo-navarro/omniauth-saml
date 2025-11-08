@@ -168,10 +168,12 @@ module OmniAuth
       end
 
       def slo_relay_state
-        relay_state = request.params["RelayState"]
+        if request.params.has_key?("RelayState") && request.params["RelayState"] != ""
+          relay_state = request.params["RelayState"]
 
-        if relay_state && relay_state != "" && valid_slo_relay_state?(relay_state)
-          return relay_state
+          if valid_slo_relay_state?(relay_state)
+            return relay_state
+          end
         end
 
         default_relay_state = default_slo_relay_state
