@@ -1,5 +1,6 @@
 require 'omniauth'
 require 'ruby-saml'
+require 'uri'
 
 module OmniAuth
   module Strategies
@@ -27,8 +28,28 @@ module OmniAuth
         first_name: ["first_name", "firstname", "firstName"],
         last_name: ["last_name", "lastname", "lastName"]
       }
+      DEFAULT_SLO_RELAY_STATE_VALIDATOR = lambda do |relay_state, _request|
+        return true if relay_state.nil? || relay_state == ""
+
+        begin
+          uri = URI.parse(relay_state)
+        rescue URI::Error
+          return false
+        end
+
+        if uri.scheme.nil?
+          return false if relay_state.start_with?("//")
+
+          path = uri.path
+          path && path.start_with?("/")
+        else
+          %w[http https].include?(uri.scheme) && !uri.host.nil?
+        end
+      end
+
       option :slo_default_relay_state
       option :slo_enabled, true
+      option :slo_relay_state_validator, DEFAULT_SLO_RELAY_STATE_VALIDATOR
       option :uid_attribute
       option :idp_slo_session_destroy, proc { |_env, session| session.clear }
 
@@ -147,19 +168,57 @@ module OmniAuth
       end
 
       def slo_relay_state
-        if request.params.has_key?("RelayState") && request.params["RelayState"] != ""
-          request.params["RelayState"]
+        relay_state_param = request.params["RelayState"]
+        relay_state_present = relay_state_param && relay_state_param != ""
+        relay_state = relay_state_param
+        relay_state = nil if relay_state == ""
+
+        return relay_state if relay_state && valid_slo_relay_state?(relay_state)
+
+        default_relay_state = default_slo_relay_state
+
+        if default_relay_state.nil? || default_relay_state == ""
+          raise OmniAuth::Strategies::SAML::ValidationError.new("Invalid RelayState") if relay_state_present
+
+          return default_relay_state
+        end
+
+        return default_relay_state if valid_slo_relay_state?(default_relay_state)
+
+        raise OmniAuth::Strategies::SAML::ValidationError.new("Invalid RelayState")
+      end
+
+      def valid_slo_relay_state?(relay_state)
+        validator = options.slo_relay_state_validator
+        return true unless validator
+
+        !!call_slo_relay_state_validator(validator, relay_state)
+      end
+
+      def call_slo_relay_state_validator(validator, relay_state)
+        arity = validator.arity
+
+        return validator.call if arity.zero?
+        return validator.call(relay_state, request) if arity.negative?
+
+        if arity == 1
+          validator.call(relay_state)
         else
-          slo_default_relay_state = options.slo_default_relay_state
-          if slo_default_relay_state.respond_to?(:call)
-            if slo_default_relay_state.arity == 1
-              slo_default_relay_state.call(request)
-            else
-              slo_default_relay_state.call
-            end
+          validator.call(relay_state, request)
+        end
+      end
+
+      def default_slo_relay_state
+        slo_default_relay_state = options.slo_default_relay_state
+
+        if slo_default_relay_state.respond_to?(:call)
+          if slo_default_relay_state.arity == 1
+            slo_default_relay_state.call(request)
           else
-            slo_default_relay_state
+            slo_default_relay_state.call
           end
+        else
+          slo_default_relay_state
         end
       end
 

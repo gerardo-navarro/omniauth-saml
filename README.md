@@ -105,6 +105,18 @@ Note that when [integrating with Devise](#devise-integration), the URL path will
 
 * `:slo_enabled` - Enables or disables Single Logout (SLO). Set to `false` to disable SLO. Defaults to `true`. Optional.
 
+* `:slo_relay_state_validator` - A callable used to validate any RelayState before OmniAuth uses it for
+  redirects in Single Logout flows. The callable receives the RelayState value and, if it accepts a
+  second argument, the current Rack request. The default validator allows relative paths beginning
+  with `/` and absolute `http` or `https` URLs, and rejects invalid URIs, protocol-relative URLs, and
+  other schemes. Optional.
+
+  ```ruby
+  config.omniauth :saml, slo_relay_state_validator: lambda { |relay_state|
+    relay_state&.start_with?("/")
+  }
+  ```
+
 * `:idp_sso_service_url_runtime_params` - A dynamic mapping of request params that exist
   during the request phase of OmniAuth that should to be sent to the IdP after a specific
   mapping. So for example, a param `original_request_param` with value `original_param_value`,
