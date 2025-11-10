@@ -48,6 +48,7 @@ module OmniAuth
       end
 
       option :slo_default_relay_state
+      option :slo_enabled, true
       option :slo_relay_state_validator, DEFAULT_SLO_RELAY_STATE_VALIDATOR
       option :uid_attribute
       option :idp_slo_session_destroy, proc { |_env, session| session.clear }
@@ -94,8 +95,12 @@ module OmniAuth
           if on_subpath?(:metadata)
             other_phase_for_metadata
           elsif on_subpath?(:slo)
+            return slo_disabled_response unless slo_enabled?
+
             other_phase_for_slo
           elsif on_subpath?(:spslo)
+            return slo_disabled_response unless slo_enabled?
+
             other_phase_for_spslo
           else
             call_app!
@@ -305,6 +310,14 @@ module OmniAuth
         else
           Rack::Response.new("Not Implemented", 501, { "Content-Type" => "text/html" }).finish
         end
+      end
+
+      def slo_enabled?
+        !!options[:slo_enabled]
+      end
+
+      def slo_disabled_response
+        Rack::Response.new("Not Implemented", 501, { "Content-Type" => "text/html" }).finish
       end
 
       def add_request_attributes_to(settings)
