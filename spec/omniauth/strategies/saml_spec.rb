@@ -289,43 +289,58 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
         expect(last_response.location).to match /https:\/\/example.com\//
       end
 
-      context "when response relay state is invalid" do
+      context 'when slo_default_relay_state is present' do
         let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
-        let(:params) do
-          {
-            SAMLResponse: load_xml(:example_logout_response),
-            RelayState: "https://example.com/",
-          }
-        end
 
-        let(:opts) do
-          { "rack.session" => { "saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9" } }
-        end
+        context "when response relay state is invalid" do
+          let(:params) do
+            {
+              SAMLResponse: load_xml(:example_logout_response),
+              RelayState: "https://example.com/",
+            }
+          end
 
-        subject(:post_slo_response) { post "/auth/saml/slo", params, opts }
+          let(:opts) do
+            { "rack.session" => { "saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9" } }
+          end
 
-        [
-          "//attacker.test",
-          "javascript:alert(1)",
-        ].each do |unsafe_relay_state|
-          context "#{unsafe_relay_state}"  do
-            let(:params) { super().merge(RelayState: unsafe_relay_state)}
+          subject(:post_slo_response) { post "/auth/saml/slo", params, opts }
 
-            it 'falls back to the default' do
-              is_expected.to be_redirect.and have_attributes(location: "/signed-out")
+          [
+            "//attacker.test",
+            "javascript:alert(1)",
+          ].each do |unsafe_relay_state|
+            context "#{unsafe_relay_state}" do
+              let(:params) { super().merge(RelayState: unsafe_relay_state) }
+
+              it { is_expected.to be_redirect.and have_attributes(location: "/signed-out") }
             end
           end
+
+          context 'when absolute https relay state' do
+            let(:params) { super().merge(RelayState: "https://example.com/logout") }
+
+            it { is_expected.to be_redirect.and have_attributes(location: "https://example.com/logout") }
+          end
         end
+      end
 
-        context 'when absolute https relay state' do
-          let(:params) { super().merge(RelayState: "https://example.com/logout")}
+      context 'when slo_default_relay_state is blank' do
+        let(:saml_options) { super().merge(slo_default_relay_state: nil) }
 
-          it { is_expected.to be_redirect.and have_attributes(location: "https://example.com/logout") }
-        end
+        context "when response relay state is invalid" do
+          let(:params) do
+            {
+              SAMLResponse: load_xml(:example_logout_response),
+              RelayState: "javascript:alert(1)",
+            }
+          end
 
-        context 'when there is no safe fallback' do
-          let(:saml_options) { super().except(:slo_default_relay_state) }
-          let(:params) { super().merge(RelayState: 'javascript:alert(1)')}
+          let(:opts) do
+            { "rack.session" => { "saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9" } }
+          end
+
+          subject(:post_slo_response) { post "/auth/saml/slo", params, opts }
 
           it { expect { post_slo_response }.to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState") }
         end
@@ -352,64 +367,118 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
         end
       end
 
-      context "when request relay state is invalid" do
-        let(:params) do
-          {
-            "SAMLRequest" => load_xml(:example_logout_request),
-            "RelayState" => relay_state,
-          }
-        end
+      context 'when slo_default_relay_state is present' do
+        let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
 
-        before do
-          saml_options[:slo_default_relay_state] = "/signed-out"
-        end
+        context "when request relay state is invalid" do
+          let(:params) do
+            {
+              "SAMLRequest" => load_xml(:example_logout_request),
+              "RelayState" => relay_state,
+            }
+          end
 
-        [
-          "//attacker.test",
-          "javascript:alert(1)",
-        ].each do |unsafe_relay_state|
-          context "when the relay state is #{unsafe_relay_state}" do
-            let(:relay_state) { unsafe_relay_state }
+          [
+            "//attacker.test",
+            "javascript:alert(1)",
+          ].each do |unsafe_relay_state|
+            context "when the relay state is #{unsafe_relay_state}" do
+              let(:relay_state) { unsafe_relay_state }
 
-            it "falls back to the default" do
+              it "falls back to the default" do
+                subject
+
+                expect(last_response).to be_redirect
+                expect(last_response.location).to match /RelayState=%2Fsigned-out/
+              end
+            end
+          end
+
+          context "when the validator rejects the default relay state" do
+            let(:relay_state) { "javascript:alert(1)" }
+            let(:saml_options) do
+              super().merge(slo_relay_state_validator: proc { |value| value.start_with?("https://") })
+            end
+
+            it "still falls back to the configured default" do
               subject
 
               expect(last_response).to be_redirect
               expect(last_response.location).to match /RelayState=%2Fsigned-out/
             end
           end
-        end
 
-        context "when the validator rejects the default relay state" do
-          let(:relay_state) { "javascript:alert(1)" }
+          context "when the relay state is an https URL" do
+            let(:relay_state) { "https://example.com/logout" }
 
-          before do
-            saml_options[:slo_relay_state_validator] = proc { |value| value.start_with?("https://") }
-          end
+            it "uses the provided relay state" do
+              subject
 
-          it "still falls back to the configured default" do
-            subject
-
-            expect(last_response).to be_redirect
-            expect(last_response.location).to match /RelayState=%2Fsigned-out/
+              expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2Flogout/
+            end
           end
         end
 
-        context "when the relay state is an https URL" do
-          let(:relay_state) { "https://example.com/logout" }
+        context "with validators that resolve to falsy" do
+          let(:params) { super().merge("RelayState" => "javascript:alert(1)") }
 
-          it "uses the provided relay state" do
-            subject
+          context "when the validator option is nil" do
+            let(:saml_options) { super().merge(slo_relay_state_validator: nil) }
 
-            expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2Flogout/
+            it "skips validation" do
+              subject
+
+              expect(last_response.location).to match /RelayState=javascript%3Aalert%281%29/
+            end
+          end
+
+          context "when the validator option is false" do
+            let(:saml_options) { super().merge(slo_relay_state_validator: false) }
+
+            it "skips validation" do
+              subject
+
+              expect(last_response.location).to match /RelayState=javascript%3Aalert%281%29/
+            end
+          end
+
+          context "when the validator returns false" do
+            let(:saml_options) do
+              super().merge(slo_relay_state_validator: proc { |relay_state| relay_state == "/signed-out" })
+            end
+
+            it "falls back to the default" do
+              subject
+
+              expect(last_response.location).to match /RelayState=%2Fsigned-out/
+            end
+          end
+
+          context "when the validator returns nil" do
+            let(:saml_options) do
+              super().merge(
+                slo_relay_state_validator: proc { |relay_state| relay_state == "/signed-out" ? true : nil },
+              )
+            end
+
+            it "falls back to the default" do
+              subject
+
+              expect(last_response.location).to match /RelayState=%2Fsigned-out/
+            end
           end
         end
+      end
 
-        context "when there is no safe fallback" do
-          let(:relay_state) { "javascript:alert(1)" }
+      context 'when slo_default_relay_state is blank' do
+        let(:saml_options) { super().merge(slo_default_relay_state: nil) }
 
-          before do
-            saml_options.delete(:slo_default_relay_state)
+        context "when request relay state is invalid" do
+          let(:params) do
+            {
+              "SAMLRequest" => load_xml(:example_logout_request),
+              "RelayState" => "javascript:alert(1)",
+            }
           end
 
           it "raises an error" do
@@ -420,62 +489,21 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
 
       context "with a custom relay state validator" do
-        before do
-          saml_options[:slo_relay_state_validator] = proc do |relay_state, rack_request|
-            expect(rack_request).to respond_to(:params)
-            relay_state == "custom-state"
-          end
-
-          params["RelayState"] = "custom-state"
+        let(:saml_options) do
+          super().merge(
+            slo_relay_state_validator: proc do |relay_state, rack_request|
+              expect(rack_request).to respond_to(:params)
+              relay_state == "custom-state"
+            end,
+          )
         end
+        let(:params) { super().merge("RelayState" => "custom-state") }
 
         it "allows relay states permitted by the validator" do
           subject
 
           expect(last_response).to be_redirect
           expect(last_response.location).to include("RelayState=custom-state")
-        end
-      end
-
-      context "with validators that resolve to falsy" do
-        before do
-          saml_options[:slo_default_relay_state] = "/signed-out"
-        end
-
-        it "skips validation when the validator option is nil" do
-          saml_options[:slo_relay_state_validator] = nil
-          params["RelayState"] = "javascript:alert(1)"
-
-          subject
-
-          expect(last_response.location).to match /RelayState=javascript%3Aalert%281%29/
-        end
-
-        it "skips validation when the validator option is false" do
-          saml_options[:slo_relay_state_validator] = false
-          params["RelayState"] = "javascript:alert(1)"
-
-          subject
-
-          expect(last_response.location).to match /RelayState=javascript%3Aalert%281%29/
-        end
-
-        it "falls back to the default when the validator returns false" do
-          saml_options[:slo_relay_state_validator] = proc { |relay_state| relay_state == "/signed-out" }
-          params["RelayState"] = "javascript:alert(1)"
-
-          subject
-
-          expect(last_response.location).to match /RelayState=%2Fsigned-out/
-        end
-
-        it "falls back to the default when the validator returns nil" do
-          saml_options[:slo_relay_state_validator] = proc { |relay_state| relay_state == "/signed-out" ? true : nil }
-          params["RelayState"] = "javascript:alert(1)"
-
-          subject
-
-          expect(last_response.location).to match /RelayState=%2Fsigned-out/
         end
       end
 
@@ -530,106 +558,152 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
     end
 
-    it "allows https relay states" do
-      saml_options[:slo_default_relay_state] = "/signed-out"
+    context 'when slo_default_relay_state is present' do
+      let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
+      let(:params) { {} }
+      subject(:post_spslo_response) { post "/auth/saml/spslo", params }
 
-      post "/auth/saml/spslo", RelayState: "https://example.com/logout"
+      context 'with an https relay state' do
+        let(:params) { { RelayState: "https://example.com/logout" } }
 
-      expect(last_response).to be_redirect
-      expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2Flogout/
-    end
+        it "allows https relay states" do
+          post_spslo_response
 
-    it "rejects protocol relative relay state" do
-      saml_options[:slo_default_relay_state] = "/signed-out"
-
-      post "/auth/saml/spslo", RelayState: "//attacker.test"
-
-      expect(last_response).to be_redirect
-      expect(last_response.location).to match /RelayState=%2Fsigned-out/
-    end
-
-    it "rejects javascript relay state" do
-      saml_options[:slo_default_relay_state] = "/signed-out"
-
-      post "/auth/saml/spslo", RelayState: "javascript:alert(1)"
-
-      expect(last_response).to be_redirect
-      expect(last_response.location).to match /RelayState=%2Fsigned-out/
-    end
-
-    it "uses the configured default even when the validator would reject it" do
-      saml_options[:slo_default_relay_state] = "/signed-out"
-      saml_options[:slo_relay_state_validator] = proc { |value| value.start_with?("https://") }
-
-      post "/auth/saml/spslo", RelayState: "javascript:alert(1)"
-
-      expect(last_response).to be_redirect
-      expect(last_response.location).to match /RelayState=%2Fsigned-out/
-    end
-
-    it "raises when there is no safe relay state available" do
-      expect { post "/auth/saml/spslo", RelayState: "//example.com" }.
-        to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState")
-    end
-
-    it "allows custom validation for relay state values" do
-      saml_options[:slo_default_relay_state] = "custom-state"
-      saml_options[:slo_relay_state_validator] = proc { |relay_state| relay_state == "custom-state" }
-
-      post "/auth/saml/spslo"
-
-      expect(last_response).to be_redirect
-      expect(last_response.location).to include("RelayState=custom-state")
-    end
-
-    it "passes the request to custom validators expecting two parameters" do
-      saml_options[:slo_relay_state_validator] = proc do |relay_state, rack_request|
-        expect(rack_request).to respond_to(:params)
-        relay_state == rack_request.params["RelayState"]
+          expect(last_response).to be_redirect
+          expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2Flogout/
+        end
       end
 
-      post "/auth/saml/spslo", RelayState: "/logout"
+      context 'with a protocol relative relay state' do
+        let(:params) { { RelayState: "//attacker.test" } }
 
-      expect(last_response).to be_redirect
-      expect(last_response.location).to include("RelayState=%2Flogout")
+        it "rejects protocol relative relay state" do
+          post_spslo_response
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to match /RelayState=%2Fsigned-out/
+        end
+      end
+
+      context 'with a javascript relay state' do
+        let(:params) { { RelayState: "javascript:alert(1)" } }
+
+        it "rejects javascript relay state" do
+          post_spslo_response
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to match /RelayState=%2Fsigned-out/
+        end
+
+        context 'when the validator would reject the default' do
+          let(:saml_options) do
+            super().merge(slo_relay_state_validator: proc { |value| value.start_with?("https://") })
+          end
+
+          it "uses the configured default" do
+            post_spslo_response
+
+            expect(last_response).to be_redirect
+            expect(last_response.location).to match /RelayState=%2Fsigned-out/
+          end
+        end
+
+        context 'when the validator is nil' do
+          let(:saml_options) { super().merge(slo_relay_state_validator: nil) }
+
+          it "skips validation" do
+            post_spslo_response
+
+            expect(last_response).to be_redirect
+            expect(last_response.location).to match /RelayState=javascript%3Aalert%281%29/
+          end
+        end
+
+        context 'when the validator is false' do
+          let(:saml_options) { super().merge(slo_relay_state_validator: false) }
+
+          it "skips validation" do
+            post_spslo_response
+
+            expect(last_response).to be_redirect
+            expect(last_response.location).to match /RelayState=javascript%3Aalert%281%29/
+          end
+        end
+
+        context 'when the validator returns false' do
+          let(:saml_options) do
+            super().merge(slo_relay_state_validator: proc { |state| state == "/signed-out" })
+          end
+
+          it "falls back to the default" do
+            post_spslo_response
+
+            expect(last_response).to be_redirect
+            expect(last_response.location).to match /RelayState=%2Fsigned-out/
+          end
+        end
+
+        context 'when the validator returns nil' do
+          let(:saml_options) do
+            super().merge(
+              slo_relay_state_validator: proc { |state| state == "/signed-out" ? true : nil },
+            )
+          end
+
+          it "falls back to the default" do
+            post_spslo_response
+
+            expect(last_response).to be_redirect
+            expect(last_response.location).to match /RelayState=%2Fsigned-out/
+          end
+        end
+      end
+
+      context 'when using a custom default relay state' do
+        let(:saml_options) do
+          super().merge(
+            slo_default_relay_state: "custom-state",
+            slo_relay_state_validator: proc { |state| state == "custom-state" },
+          )
+        end
+
+        it "allows custom validation for relay state values" do
+          post_spslo_response
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to include("RelayState=custom-state")
+        end
+      end
+
+      context 'with a custom validator expecting the request' do
+        let(:params) { { RelayState: "/logout" } }
+        let(:saml_options) do
+          super().merge(
+            slo_relay_state_validator: proc do |state, rack_request|
+              expect(rack_request).to respond_to(:params)
+              state == rack_request.params["RelayState"]
+            end,
+          )
+        end
+
+        it "passes the request to custom validators expecting two parameters" do
+          post_spslo_response
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to include("RelayState=%2Flogout")
+        end
+      end
     end
 
-    it "skips validation when the validator is nil" do
-      saml_options[:slo_relay_state_validator] = nil
+    context 'when slo_default_relay_state is blank' do
+      let(:saml_options) { super().merge(slo_default_relay_state: nil) }
+      let(:params) { { RelayState: "//example.com" } }
+      subject(:post_spslo_response) { post "/auth/saml/spslo", params }
 
-      post "/auth/saml/spslo", RelayState: "javascript:alert(1)"
-
-      expect(last_response).to be_redirect
-      expect(last_response.location).to match /RelayState=javascript%3Aalert%281%29/
-    end
-
-    it "skips validation when the validator is false" do
-      saml_options[:slo_relay_state_validator] = false
-
-      post "/auth/saml/spslo", RelayState: "javascript:alert(1)"
-
-      expect(last_response).to be_redirect
-      expect(last_response.location).to match /RelayState=javascript%3Aalert%281%29/
-    end
-
-    it "falls back to the default when the validator returns false" do
-      saml_options[:slo_default_relay_state] = "/signed-out"
-      saml_options[:slo_relay_state_validator] = proc { |relay_state| relay_state == "/signed-out" }
-
-      post "/auth/saml/spslo", RelayState: "javascript:alert(1)"
-
-      expect(last_response).to be_redirect
-      expect(last_response.location).to match /RelayState=%2Fsigned-out/
-    end
-
-    it "falls back to the default when the validator returns nil" do
-      saml_options[:slo_default_relay_state] = "/signed-out"
-      saml_options[:slo_relay_state_validator] = proc { |relay_state| relay_state == "/signed-out" ? true : nil }
-
-      post "/auth/saml/spslo", RelayState: "javascript:alert(1)"
-
-      expect(last_response).to be_redirect
-      expect(last_response.location).to match /RelayState=%2Fsigned-out/
+      it "raises when there is no safe relay state available" do
+        expect { post_spslo_response }.
+          to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState")
+      end
     end
 
     it "should give not implemented without an idp_slo_service_url" do
