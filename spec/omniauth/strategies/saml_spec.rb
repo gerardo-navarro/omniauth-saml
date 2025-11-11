@@ -334,16 +334,33 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
 
       let(:params) do
         {
-          'SAMLResponse' => load_xml(:example_logout_response),
-          'RelayState' => "https://example.com/",
+          SAMLResponse: load_xml(:example_logout_response),
+          RelayState: relay_state,
         }
       end
 
-      subject(:response) { post "/auth/saml/slo", params, opts }
+      subject(:post_slo_response) { post "/auth/saml/slo", params, opts }
 
-      it "should redirect to relaystate" do
-        expect(response).to be_redirect
-        expect(response.location).to eq("https://example.com/")
+      context "when relay state is relative" do
+        let(:relay_state) { "/signed-out" }
+
+        it "redirects to the relaystate" do
+          post_slo_response
+
+          expect(last_response).to be_redirect
+          expect(last_response.location).to eq "/signed-out"
+        end
+      end
+
+      context "when relay state is an absolute https URL" do
+        let(:relay_state) { "https://example.com/" }
+
+        it "redirects without a location header" do
+          post_slo_response
+
+          expect(last_response).to be_redirect
+          expect(last_response.headers.fetch("Location")).to be_nil
+        end
       end
 
       context 'when slo_default_relay_state is present' do
@@ -357,9 +374,14 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
         let(:saml_options) { super().merge(slo_default_relay_state: nil) }
 
         context "when response relay state is invalid" do
-          let(:params) { super().merge('RelayState' => "javascript:alert(1)") }
+          let(:relay_state) { "javascript:alert(1)" }
 
-          it { expect { response }.to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState") }
+          it "redirects without a location header" do
+            post_slo_response
+
+            expect(last_response).to be_redirect
+            expect(last_response.headers.fetch("Location")).to be_nil
+          end
         end
       end
     end
@@ -367,20 +389,24 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     context "when request is a logout request" do
       subject { post "/auth/saml/slo", params, "rack.session" => { "saml_uid" => "username@example.com" } }
 
+      let(:relay_state) { "https://example.com/" }
+
       let(:params) do
         {
           "SAMLRequest" => load_xml(:example_logout_request),
-          "RelayState" => "https://example.com/",
+          "RelayState" => relay_state,
         }
       end
 
       context "when logout request is valid" do
+        let(:relay_state) { "/logout" }
+
         before { subject }
 
         it "should redirect to logout response" do
           expect(last_response).to be_redirect
           expect(last_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
-          expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
+          expect(last_response.location).to match /RelayState=%2Flogout/
         end
       end
 
@@ -401,9 +427,12 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
             }
           end
 
-          it "raises an error" do
-            expect { subject }.
-              to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState")
+          it "redirects without including a RelayState parameter" do
+            subject
+
+            expect(last_response).to be_redirect
+            expect(last_response.location).to match %r{https://idp\.sso\.example\.com/signoff/29490}
+            expect(last_response.location).not_to match(/RelayState=/)
           end
         end
       end
@@ -485,10 +514,10 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
     end
 
-    context 'when slo_default_relay_state is present' do
-      let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
-      let(:params) { {} }
-      subject { post "/auth/saml/spslo", params }
+      context 'when slo_default_relay_state is present' do
+        let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
+        let(:params) { {} }
+        subject { post "/auth/saml/spslo", params }
 
       it_behaves_like 'validating RelayState param'
 
@@ -523,7 +552,13 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       let(:params) { { RelayState: "//example.com" } }
       subject { post "/auth/saml/spslo", params }
 
-      it { expect { subject }.to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState") }
+      it "redirects without including a RelayState parameter" do
+        subject
+
+        expect(last_response).to be_redirect
+        expect(last_response.location).to match %r{https://idp\.sso\.example\.com/signoff/29490}
+        expect(last_response.location).not_to match(/RelayState=/)
+      end
     end
 
     it "should give not implemented without an idp_slo_service_url" do

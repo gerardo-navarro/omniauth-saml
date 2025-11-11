@@ -31,20 +31,18 @@ module OmniAuth
       DEFAULT_SLO_RELAY_STATE_VALIDATOR = lambda do |relay_state, _request|
         return true if relay_state.nil? || relay_state == ""
 
+        return false if relay_state.start_with?("//")
+
         begin
           uri = URI.parse(relay_state)
         rescue URI::Error
           return false
         end
 
-        if uri.scheme.nil?
-          return false if relay_state.start_with?("//")
+        return false unless uri.relative?
 
-          path = uri.path
-          path && path.start_with?("/")
-        else
-          %w[http https].include?(uri.scheme) && !uri.host.nil?
-        end
+        path = uri.path
+        path && path.start_with?("/")
       end
 
       option :slo_default_relay_state
@@ -172,24 +170,17 @@ module OmniAuth
           relay_state = request.params["RelayState"]
 
           return relay_state if valid_slo_relay_state?(relay_state)
-
-          default_relay_state = default_slo_relay_state
-
-          if default_relay_state.nil?
-            raise OmniAuth::Strategies::SAML::ValidationError.new("Invalid RelayState")
-          end
-
-          default_relay_state
-        else
-          default_slo_relay_state
         end
+
+        default_slo_relay_state
       end
 
       def valid_slo_relay_state?(relay_state)
         validator = options.slo_relay_state_validator
-        return true unless validator
 
-        !!call_slo_relay_state_validator(validator, relay_state)
+        return !!call_slo_relay_state_validator(validator, relay_state) if validator.respond_to?(:call)
+
+        !!validator
       end
 
       def call_slo_relay_state_validator(validator, relay_state)
@@ -197,7 +188,6 @@ module OmniAuth
 
         return validator.call if validator.arity.zero?
         return validator.call(relay_state) if validator.arity == 1
-
         validator.call(relay_state, request)
       end
 
@@ -205,9 +195,7 @@ module OmniAuth
         slo_default_relay_state = options.slo_default_relay_state
 
         return slo_default_relay_state unless slo_default_relay_state.respond_to?(:call)
-
         return slo_default_relay_state.call if slo_default_relay_state.arity.zero?
-
         slo_default_relay_state.call(request)
       end
 
