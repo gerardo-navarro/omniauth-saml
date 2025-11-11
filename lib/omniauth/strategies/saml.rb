@@ -170,17 +170,9 @@ module OmniAuth
           relay_state = request.params["RelayState"]
 
           return relay_state if valid_slo_relay_state?(relay_state)
-
-          default_relay_state = default_slo_relay_state
-
-          if default_relay_state.nil?
-            raise OmniAuth::Strategies::SAML::ValidationError.new("Invalid RelayState")
-          end
-
-          default_relay_state
-        else
-          default_slo_relay_state
         end
+
+        default_slo_relay_state
       end
 
       def valid_slo_relay_state?(relay_state)

@@ -303,9 +303,11 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       context "when relay state is an absolute https URL" do
         let(:relay_state) { "https://example.com/" }
 
-        it "raises an invalid relay state error" do
-          expect { post_slo_response }.
-            to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState")
+        it "redirects without a location header" do
+          post_slo_response
+
+          expect(last_response).to be_redirect
+          expect(last_response.headers.fetch("Location")).to be_nil
         end
       end
 
@@ -335,7 +337,12 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
         context "when response relay state is invalid" do
           let(:relay_state) { "javascript:alert(1)" }
 
-          it { expect { post_slo_response }.to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState") }
+          it "redirects without a location header" do
+            post_slo_response
+
+            expect(last_response).to be_redirect
+            expect(last_response.headers.fetch("Location")).to be_nil
+          end
         end
       end
     end
@@ -452,9 +459,12 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
             }
           end
 
-          it "raises an error" do
-            expect { subject }.
-              to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState")
+          it "redirects without including a RelayState parameter" do
+            subject
+
+            expect(last_response).to be_redirect
+            expect(last_response.location).to match %r{https://idp\.sso\.example\.com/signoff/29490}
+            expect(last_response.location).not_to match(/RelayState=/)
           end
         end
       end
@@ -634,7 +644,13 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       let(:params) { { RelayState: "//example.com" } }
       subject { post "/auth/saml/spslo", params }
 
-      it { expect { subject }.to raise_error(OmniAuth::Strategies::SAML::ValidationError, "Invalid RelayState") }
+      it "redirects without including a RelayState parameter" do
+        subject
+
+        expect(last_response).to be_redirect
+        expect(last_response.location).to match %r{https://idp\.sso\.example\.com/signoff/29490}
+        expect(last_response.location).not_to match(/RelayState=/)
+      end
     end
 
     it "should give not implemented without an idp_slo_service_url" do
