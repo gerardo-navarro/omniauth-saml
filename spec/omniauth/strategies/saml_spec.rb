@@ -30,6 +30,55 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
   end
   let(:strategy) { [OmniAuth::Strategies::SAML, saml_options] }
 
+  shared_examples 'validating RelayState param' do
+    context 'when slo_relay_state_validator is not defined and default' do
+      [
+        ['/signed-out', '//attacker.test',                            '%2Fsigned-out'],
+        ['/signed-out', 'javascript:alert(1)',                        '%2Fsigned-out'],
+        ['/signed-out', 'https://example.com/logout',                 '%2Fsigned-out'],
+        ['/signed-out', 'https://example.com/logout?param=1&two=two', '%2Fsigned-out'],
+        ['/signed-out', '/',                                          '%2F'],
+        ['',            '//attacker.test',                            ''],
+        ['',            '/team/logout',                               '%2Fteam%2Flogout'],
+      ].each do |slo_default_relay_state, relay_state_param, expected_relay_state|
+        context "when slo_default_relay_state: #{slo_default_relay_state.inspect}, relay_state_param: #{relay_state_param.inspect}" do
+          let(:saml_options) { super().merge(slo_default_relay_state: slo_default_relay_state) }
+          let(:params) { super().merge('RelayState' => relay_state_param) }
+
+          it { is_expected.to be_redirect.and have_attributes(location: a_string_including("RelayState=#{expected_relay_state}")) }
+        end
+      end
+    end
+
+    context 'when slo_relay_state_validator is overridden' do
+      [
+        ['/signed-out', proc { |state| state.start_with?('https://trusted.example.com') }, 'https://trusted.example.com/logout', 'https%3A%2F%2Ftrusted.example.com%2Flogout'],
+        ['/signed-out', proc { |state| state.start_with?('https://trusted.example.com') }, 'https://attacker.test/logout',       '%2Fsigned-out'],
+        ['/signed-out', proc { |state| state.start_with?('https://trusted.example.com') }, '/safe/path',                         '%2Fsigned-out'],
+        ['/signed-out', proc { |state, req| state == req.params['RelayState'] },           '/team/logout',                       '%2Fteam%2Flogout'],
+        ['/signed-out', nil,                                                               '//attacker.test',                    '%2Fsigned-out'],
+        ['/signed-out', false,                                                             '//attacker.test',                    '%2Fsigned-out'],
+        ['/signed-out', proc { |_| false },                                                '//attacker.test',                    '%2Fsigned-out'],
+        ['/signed-out', proc { |_| true },                                                 'javascript:alert(1)',                'javascript%3Aalert%281%29'],
+        [nil,           true,                                                              'https://example.com/logout',         'https%3A%2F%2Fexample.com%2Flogout'],
+        [nil,           true,                                                              'javascript:alert(1)',                'javascript%3Aalert%281%29'],
+        [nil,           true,                                                              '/',                                  '%2F'],
+      ].each do |slo_default_relay_state, slo_relay_state_validator, relay_state_param, expected_relay_state|
+        context "when slo_default_relay_state: #{slo_default_relay_state.inspect}, slo_relay_state_validator: #{slo_relay_state_validator.inspect}, relay_state_param: #{relay_state_param.inspect}" do
+          let(:saml_options) do
+            super().merge(
+              slo_default_relay_state: slo_default_relay_state,
+              slo_relay_state_validator: slo_relay_state_validator,
+            )
+          end
+          let(:params) { super().merge('RelayState' => relay_state_param) }
+
+          it { is_expected.to be_redirect.and have_attributes(location: a_string_including("RelayState=#{expected_relay_state}")) }
+        end
+      end
+    end
+  end
+
   describe 'POST /auth/saml' do
     context 'without idp runtime params present' do
       before do
@@ -280,17 +329,12 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
         { "rack.session" => { "saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9" } }
       end
 
-      let(:params) do
-        {
-          SAMLResponse: load_xml(:example_logout_response),
-          RelayState: relay_state,
-        }
-      end
+      let(:params) { { SAMLResponse: load_xml(:example_logout_response) } }
 
       subject(:post_slo_response) { post "/auth/saml/slo", params, opts }
 
       context "when relay state is relative" do
-        let(:relay_state) { "/signed-out" }
+        let(:params) {super().merge(RelayState: "/signed-out")}
 
         it "redirects to the relaystate" do
           post_slo_response
@@ -301,7 +345,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
 
       context "when relay state is an absolute https URL" do
-        let(:relay_state) { "https://example.com/" }
+        let(:params) {super().merge(RelayState: "https://example.com/")}
 
         it "redirects without a location header" do
           post_slo_response
@@ -314,35 +358,32 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       context 'when slo_default_relay_state is present' do
         let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
 
+        context "when response relay state is valid" do
+          let(:params) {super().merge(RelayState: "/safe/logout")}
+
+          it {is_expected.to be_redirect.and have_attributes(location: '/safe/logout') }
+        end
+
         context "when response relay state is invalid" do
-          let(:relay_state) { "https://example.com/" }
+          let(:params) {super().merge(RelayState: "javascript:alert(1)")}
 
-          [
-            "//attacker.test",
-            "javascript:alert(1)",
-            "https://example.com/logout",
-          ].each do |unsafe_relay_state|
-            context "#{unsafe_relay_state}" do
-              let(:relay_state) { unsafe_relay_state }
-
-              it { is_expected.to be_redirect.and have_attributes(location: "/signed-out") }
-            end
-          end
+          it {is_expected.to be_redirect.and have_attributes(location: '/signed-out') }
         end
       end
 
       context 'when slo_default_relay_state is blank' do
         let(:saml_options) { super().merge(slo_default_relay_state: nil) }
 
+        context "when response relay state is valid" do
+          let(:params) {super().merge(RelayState: "/safe/logout")}
+
+          it {is_expected.to be_redirect.and have_attributes(location: '/safe/logout') }
+        end
+
         context "when response relay state is invalid" do
-          let(:relay_state) { "javascript:alert(1)" }
+          let(:params) {super().merge(RelayState: "javascript:alert(1)")}
 
-          it "redirects without a location header" do
-            post_slo_response
-
-            expect(last_response).to be_redirect
-            expect(last_response.headers.fetch("Location")).to be_nil
-          end
+          it {is_expected.to be_redirect.and have_attributes(location: nil) }
         end
       end
     end
@@ -374,78 +415,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       context 'when slo_default_relay_state is present' do
         let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
 
-        context "when request relay state is invalid" do
-          let(:relay_state) { "https://example.com/" }
-
-          let(:params) do
-            {
-              "SAMLRequest" => load_xml(:example_logout_request),
-              "RelayState" => relay_state,
-            }
-          end
-
-          [
-            "//attacker.test",
-            "javascript:alert(1)",
-            "https://example.com/logout",
-          ].each do |unsafe_relay_state|
-            context "when the relay state is #{unsafe_relay_state}" do
-              let(:relay_state) { unsafe_relay_state }
-
-              it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-            end
-          end
-
-          context "when the validator rejects the default relay state" do
-            let(:relay_state) { "javascript:alert(1)" }
-            let(:saml_options) do
-              super().merge(slo_relay_state_validator: proc { |value| value.start_with?("https://") })
-            end
-
-            it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-          end
-
-        end
-
-        context "with validators that resolve to falsy" do
-          let(:params) { super().merge("RelayState" => "javascript:alert(1)") }
-
-          context "when the validator option is nil" do
-            let(:saml_options) { super().merge(slo_relay_state_validator: nil) }
-
-            it { is_expected.to have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-          end
-
-          context "when the validator option is false" do
-            let(:saml_options) { super().merge(slo_relay_state_validator: false) }
-
-            it { is_expected.to have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-          end
-
-          context "when the validator option is true" do
-            let(:saml_options) { super().merge(slo_relay_state_validator: true) }
-
-            it { is_expected.to have_attributes(location: a_string_matching(/RelayState=javascript%3Aalert%281%29/)) }
-          end
-
-          context "when the validator returns false" do
-            let(:saml_options) do
-              super().merge(slo_relay_state_validator: proc { |relay_state| relay_state == "/signed-out" })
-            end
-
-            it { is_expected.to have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-          end
-
-          context "when the validator returns nil" do
-            let(:saml_options) do
-              super().merge(
-                slo_relay_state_validator: proc { |relay_state| relay_state == "/signed-out" ? true : nil },
-              )
-            end
-
-            it { is_expected.to have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-          end
-        end
+        it_behaves_like 'validating RelayState param'
       end
 
       context 'when slo_default_relay_state is blank' do
@@ -546,72 +516,12 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
     end
 
-      context 'when slo_default_relay_state is present' do
-        let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
-        let(:params) { {} }
-        subject { post "/auth/saml/spslo", params }
+    context 'when slo_default_relay_state is present' do
+      let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
+      let(:params) { {} }
+      subject { post "/auth/saml/spslo", params }
 
-      context 'with an https relay state' do
-        let(:params) { { RelayState: "https://example.com/logout" } }
-
-        it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-      end
-
-      context 'with a protocol relative relay state' do
-        let(:params) { { RelayState: "//attacker.test" } }
-
-        it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-      end
-
-        context 'with a javascript relay state' do
-          let(:params) { { RelayState: "javascript:alert(1)" } }
-
-          it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-
-          context 'when the validator would reject the default' do
-            let(:saml_options) do
-              super().merge(slo_relay_state_validator: proc { |value| value.start_with?("https://") })
-            end
-
-            it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-          end
-
-          context 'when the validator is nil' do
-            let(:saml_options) { super().merge(slo_relay_state_validator: nil) }
-
-            it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-          end
-
-          context 'when the validator is false' do
-            let(:saml_options) { super().merge(slo_relay_state_validator: false) }
-
-            it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-          end
-
-          context 'when the validator is true' do
-            let(:saml_options) { super().merge(slo_relay_state_validator: true) }
-
-            it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=javascript%3Aalert%281%29/)) }
-          end
-
-          context 'when the validator returns false' do
-            let(:saml_options) do
-              super().merge(slo_relay_state_validator: proc { |state| state == "/signed-out" })
-          end
-
-          it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-        end
-
-        context 'when the validator returns nil' do
-          let(:saml_options) do
-            super().merge(
-              slo_relay_state_validator: proc { |state| state == "/signed-out" ? true : nil },
-            )
-          end
-
-          it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Fsigned-out/)) }
-        end
-      end
+      it_behaves_like 'validating RelayState param'
 
       context 'when using a custom default relay state' do
         let(:saml_options) do
