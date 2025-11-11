@@ -31,20 +31,18 @@ module OmniAuth
       DEFAULT_SLO_RELAY_STATE_VALIDATOR = lambda do |relay_state, _request|
         return true if relay_state.nil? || relay_state == ""
 
+        return false if relay_state.start_with?("//")
+
         begin
           uri = URI.parse(relay_state)
         rescue URI::Error
           return false
         end
 
-        if uri.scheme.nil?
-          return false if relay_state.start_with?("//")
+        return false unless uri.relative?
 
-          path = uri.path
-          path && path.start_with?("/")
-        else
-          %w[http https].include?(uri.scheme) && !uri.host.nil?
-        end
+        path = uri.path
+        path && path.start_with?("/")
       end
 
       option :slo_default_relay_state
