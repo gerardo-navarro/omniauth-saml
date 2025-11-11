@@ -116,17 +116,6 @@ Note that when [integrating with Devise](#devise-integration), the URL path will
   [`spec/omniauth/strategies/saml_spec.rb`](spec/omniauth/strategies/saml_spec.rb) for additional
   examples.
 
-  ```ruby
-  config.omniauth :saml, slo_relay_state_validator: lambda { |relay_state|
-    relay_state&.start_with?("/")
-  }
-
-  # Or, to inspect the Rack::Request as well:
-  config.omniauth :saml, slo_relay_state_validator: lambda { |relay_state, request|
-    request.host == "example.com" && relay_state&.start_with?("/")
-  }
-  ```
-
 * `:idp_sso_service_url_runtime_params` - A dynamic mapping of request params that exist
   during the request phase of OmniAuth that should to be sent to the IdP after a specific
   mapping. So for example, a param `original_request_param` with value `original_param_value`,
