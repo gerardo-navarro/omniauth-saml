@@ -54,11 +54,11 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       [
         ['/signed-out', proc { |state| state.start_with?('https://trusted.example.com') }, 'https://trusted.example.com/logout', 'https%3A%2F%2Ftrusted.example.com%2Flogout'],
         ['/signed-out', proc { |state| state.start_with?('https://trusted.example.com') }, 'https://attacker.test/logout',       '%2Fsigned-out'],
-        ['/signed-out', proc { |state| state.start_with?('https://trusted.example.com') }, '/safe/path',       '%2Fsigned-out'],
+        ['/signed-out', proc { |state| state.start_with?('https://trusted.example.com') }, '/safe/path',                         '%2Fsigned-out'],
         ['/signed-out', proc { |state, req| state == req.params['RelayState'] },           '/team/logout',                       '%2Fteam%2Flogout'],
         ['/signed-out', nil,                                                               '//attacker.test',                    '%2Fsigned-out'],
         ['/signed-out', false,                                                             '//attacker.test',                    '%2Fsigned-out'],
-        ['/signed-out', proc { |_| false },                                                '//attacker.test',                '%2Fsigned-out'],
+        ['/signed-out', proc { |_| false },                                                '//attacker.test',                    '%2Fsigned-out'],
         ['/signed-out', proc { |_| true },                                                 'javascript:alert(1)',                'javascript%3Aalert%281%29'],
         [nil,           true,                                                              'https://example.com/logout',         'https%3A%2F%2Fexample.com%2Flogout'],
         [nil,           true,                                                              'javascript:alert(1)',                'javascript%3Aalert%281%29'],
