@@ -196,7 +196,6 @@ module OmniAuth
 
         return validator.call if validator.arity.zero?
         return validator.call(relay_state) if validator.arity == 1
-
         validator.call(relay_state, request)
       end
 
@@ -204,9 +203,7 @@ module OmniAuth
         slo_default_relay_state = options.slo_default_relay_state
 
         return slo_default_relay_state unless slo_default_relay_state.respond_to?(:call)
-
         return slo_default_relay_state.call if slo_default_relay_state.arity.zero?
-
         slo_default_relay_state.call(request)
       end
 
