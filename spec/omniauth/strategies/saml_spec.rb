@@ -412,11 +412,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
         end
       end
 
-      context 'when slo_default_relay_state is present' do
-        let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
-
-        it_behaves_like 'validating RelayState param'
-      end
+      it_behaves_like 'validating RelayState param'
 
       context 'when slo_default_relay_state is blank' do
         let(:saml_options) { super().merge(slo_default_relay_state: nil) }
@@ -491,6 +487,9 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
   end
 
   describe 'POST /auth/saml/spslo' do
+    let(:params) { {} }
+    subject { post "/auth/saml/spslo", params }
+
     def test_default_relay_state(static_default_relay_state = nil, &block_default_relay_state)
       saml_options["slo_default_relay_state"] = static_default_relay_state || block_default_relay_state
       post "/auth/saml/spslo"
@@ -516,43 +515,11 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
     end
 
-    context 'when slo_default_relay_state is present' do
-      let(:saml_options) { super().merge(slo_default_relay_state: '/signed-out') }
-      let(:params) { {} }
-      subject { post "/auth/saml/spslo", params }
-
-      it_behaves_like 'validating RelayState param'
-
-      context 'when using a custom default relay state' do
-        let(:saml_options) do
-          super().merge(
-            slo_default_relay_state: "custom-state",
-            slo_relay_state_validator: proc { |state| state == "custom-state" },
-          )
-        end
-
-        it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=custom-state/)) }
-      end
-
-      context 'with a custom validator expecting the request' do
-        let(:params) { { RelayState: "/logout" } }
-        let(:saml_options) do
-          super().merge(
-            slo_relay_state_validator: proc do |state, rack_request|
-              expect(rack_request).to respond_to(:params)
-              state == rack_request.params["RelayState"]
-            end,
-          )
-        end
-
-        it { is_expected.to be_redirect.and have_attributes(location: a_string_matching(/RelayState=%2Flogout/)) }
-      end
-    end
+    it_behaves_like 'validating RelayState param'
 
     context 'when slo_default_relay_state is blank' do
       let(:saml_options) { super().merge(slo_default_relay_state: nil) }
       let(:params) { { RelayState: "//example.com" } }
-      subject { post "/auth/saml/spslo", params }
 
       it "redirects without including a RelayState parameter" do
         subject
