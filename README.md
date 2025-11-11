@@ -107,10 +107,10 @@ Note that when [integrating with Devise](#devise-integration), the URL path will
 
 * `:slo_relay_state_validator` - A callable used to validate any RelayState before OmniAuth uses it for
   redirects in Single Logout flows. The callable receives the RelayState value and, if it accepts a
-  second argument, the current Rack request. The default validator allows relative paths beginning
-  with `/` and absolute `http` or `https` URLs, and rejects invalid URIs, protocol-relative URLs, and
-  other schemes. Defaults generated via `:slo_default_relay_state` are assumed to be safe and skipped by
-  this validation step. Optional.
+  second argument, the current Rack request. The default validator allows only relative paths beginning
+  with `/` and rejects absolute URLs, invalid URIs, protocol-relative URLs, and other schemes. Defaults
+  generated via `:slo_default_relay_state` are assumed to be safe and skipped by this validation step.
+  Optional.
 
   ```ruby
   config.omniauth :saml, slo_relay_state_validator: lambda { |relay_state|
