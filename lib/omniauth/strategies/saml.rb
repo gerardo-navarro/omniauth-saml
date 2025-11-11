@@ -152,10 +152,13 @@ module OmniAuth
         else
           slo_default_relay_state = options.slo_default_relay_state
           if slo_default_relay_state.respond_to?(:call)
-            if slo_default_relay_state.arity == 1
+            case slo_default_relay_state.arity
+            when 0
+              slo_default_relay_state.call
+            when 1
               slo_default_relay_state.call(request)
             else
-              slo_default_relay_state.call
+              slo_default_relay_state.call(request, nil)
             end
           else
             slo_default_relay_state

@@ -374,6 +374,54 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
     end
 
+    it "should redirect to logout request with a block with two parameters" do
+      test_default_relay_state do |request, context|
+        "https://example.com/"
+      end
+    end
+
+    context "slo_default_relay_state with different arities" do
+      it "should call proc with arity 0 without parameters" do
+        called_with = nil
+        saml_options["slo_default_relay_state"] = proc {
+          called_with = :no_params
+          "https://example.com/"
+        }
+        post "/auth/saml/spslo"
+
+        expect(last_response).to be_redirect
+        expect(called_with).to eq(:no_params)
+      end
+
+      it "should call proc with arity 1 with request parameter" do
+        called_with = nil
+        saml_options["slo_default_relay_state"] = proc { |request|
+          called_with = request
+          "https://example.com/"
+        }
+        post "/auth/saml/spslo"
+
+        expect(last_response).to be_redirect
+        expect(called_with).not_to be_nil
+        expect(called_with).to respond_to(:params)
+      end
+
+      it "should call proc with arity 2 with request and nil parameters" do
+        called_with = []
+        saml_options["slo_default_relay_state"] = proc { |request, context|
+          called_with = [request, context]
+          "https://example.com/"
+        }
+        post "/auth/saml/spslo"
+
+        expect(last_response).to be_redirect
+        expect(called_with.length).to eq(2)
+        expect(called_with[0]).not_to be_nil
+        expect(called_with[0]).to respond_to(:params)
+        expect(called_with[1]).to be_nil
+      end
+    end
+
     it "should give not implemented without an idp_slo_service_url" do
       saml_options.delete(:idp_slo_service_url)
       post "/auth/saml/spslo"
