@@ -110,13 +110,11 @@ Note that when [integrating with Devise](#devise-integration), the URL path will
   second argument, the current Rack request. The default validator allows only relative paths beginning
   with `/` and rejects absolute URLs, invalid URIs, protocol-relative URLs, and other schemes. Defaults
   generated via `:slo_default_relay_state` are assumed to be safe and skipped by this validation step.
-  Optional.
-
-  ```ruby
-  config.omniauth :saml, slo_relay_state_validator: lambda { |relay_state|
-    relay_state&.start_with?("/")
-  }
-  ```
+  Optional. When set to `true`, every RelayState value is accepted. When set to
+  `false` (or any other falsy value), every provided RelayState is rejected and the strategy falls back
+  to the default RelayState. See the SLO relay state validator specs in
+  [`spec/omniauth/strategies/saml_spec.rb`](spec/omniauth/strategies/saml_spec.rb) for additional
+  examples.
 
 * `:idp_sso_service_url_runtime_params` - A dynamic mapping of request params that exist
   during the request phase of OmniAuth that should to be sent to the IdP after a specific

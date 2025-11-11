@@ -185,9 +185,10 @@ module OmniAuth
 
       def valid_slo_relay_state?(relay_state)
         validator = options.slo_relay_state_validator
-        return true unless validator
 
-        !!call_slo_relay_state_validator(validator, relay_state)
+        return !!call_slo_relay_state_validator(validator, relay_state) if validator.respond_to?(:call)
+
+        !!validator
       end
 
       def call_slo_relay_state_validator(validator, relay_state)
