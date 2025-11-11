@@ -289,6 +289,21 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
     end
 
+    context "when response is a logout response without a relay state" do
+      before :each do
+        saml_options[:slo_default_relay_state] = nil
+        post "/auth/saml/slo", {
+          SAMLResponse: load_xml(:example_logout_response),
+          RelayState: nil,
+        }, "rack.session" => {"saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9"}
+      end
+
+      it "should redirect without a relay state" do
+        expect(last_response).to be_redirect
+        expect(last_response.headers['Location']).to be_nil
+      end
+    end
+
     context "when request is a logout request" do
       subject { post "/auth/saml/slo", params, "rack.session" => { "saml_uid" => "username@example.com" } }
 
@@ -306,6 +321,46 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
           expect(last_response).to be_redirect
           expect(last_response.location).to match /https:\/\/idp.sso.example.com\/signoff\/29490/
           expect(last_response.location).to match /RelayState=https%3A%2F%2Fexample.com%2F/
+        end
+      end
+
+      context "when the slo default relay state option is nil" do
+        before do
+          saml_options[:slo_default_relay_state] = nil
+        end
+
+        context "and a relay state param is provided" do
+          let(:params) do
+            {
+              "SAMLRequest" => load_xml(:example_logout_request),
+              "RelayState" => "https://example.com/",
+            }
+          end
+
+          before { subject }
+
+          it "should keep the relay state" do
+            expect(last_response).to be_redirect
+            query = Rack::Utils.parse_query(URI.parse(last_response.location).query.to_s)
+            expect(query["RelayState"]).to eq("https://example.com/")
+          end
+        end
+
+        context "and the relay state param is nil" do
+          let(:params) do
+            {
+              "SAMLRequest" => load_xml(:example_logout_request),
+              "RelayState" => nil,
+            }
+          end
+
+          before { subject }
+
+          it "should omit the relay state" do
+            expect(last_response).to be_redirect
+            query = Rack::Utils.parse_query(URI.parse(last_response.location).query.to_s)
+            expect(query).not_to have_key("RelayState")
+          end
         end
       end
 
@@ -378,6 +433,32 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
 
       expect(last_response.status).to eq 501
       expect(last_response.body).to match /Not Implemented/
+    end
+
+    context "when the slo default relay state option is nil" do
+      before do
+        saml_options[:slo_default_relay_state] = nil
+        post "/auth/saml/spslo"
+      end
+
+      it "should omit the relay state" do
+        expect(last_response).to be_redirect
+        query = Rack::Utils.parse_query(URI.parse(last_response.location).query.to_s)
+        expect(query).not_to have_key("RelayState")
+      end
+    end
+
+    context "when the relay state param is nil" do
+      before do
+        saml_options[:slo_default_relay_state] = "https://fallback.example.com/"
+        post "/auth/saml/spslo", { "RelayState" => nil }
+      end
+
+      it "should not include a relay state despite a default" do
+        expect(last_response).to be_redirect
+        query = Rack::Utils.parse_query(URI.parse(last_response.location).query.to_s)
+        expect(query).not_to have_key("RelayState")
+      end
     end
 
     context "when SLO is disabled" do
