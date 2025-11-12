@@ -114,9 +114,11 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
   end
 
   describe 'POST /auth/saml/callback' do
+    let(:xml) { :example_response }
+    let(:params) { { 'SAMLResponse' => load_xml(xml) } }
+
     subject(:post_callback_response) do
       post "/auth/saml/callback", params
-      last_response
     end
 
     let(:params) { { 'SAMLResponse' => load_xml(:example_response) } }
@@ -126,13 +128,15 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     end
 
     context "when the response is valid" do
-      before { post_callback_response }
-
       it "should set the uid to the nameID in the SAML response" do
+        post_callback_response
+
         expect(auth_hash['uid']).to eq '_1f6fcf6be5e13b08b1e3610e7ff59f205fbd814f23'
       end
 
       it "should set the raw info to all attributes" do
+        post_callback_response
+
         expect(auth_hash['extra']['raw_info'].all.to_hash).to eq(
           'first_name'   => ['Rajiv'],
           'last_name'    => ['Manglani'],
@@ -143,6 +147,8 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       end
 
       it "should set the response_object to the response object from ruby_saml response" do
+        post_callback_response
+
         expect(auth_hash['extra']['response_object']).to be_kind_of(OneLogin::RubySaml::Response)
       end
     end
@@ -151,7 +157,6 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       before :each do
         saml_options.delete(:assertion_consumer_service_url)
         OmniAuth.config.full_host = 'http://localhost:9080'
-        post_callback_response
       end
 
       it { is_expected.not_to fail_with(:invalid_ticket) }
@@ -164,7 +169,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     end
 
     context "when there is no name id in the XML" do
-      let(:params) { { 'SAMLResponse' => load_xml(:no_name_id) } }
+      let(:xml) { :no_name_id }
 
       before :each do
         allow(Time).to receive(:now).and_return(Time.utc(2012, 11, 8, 23, 55, 00))
@@ -176,43 +181,37 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     context "when the fingerprint is invalid" do
       before :each do
         saml_options[:idp_cert_fingerprint] = "00:00:00:00:00:0C:6C:A9:41:0F:6E:83:F6:D1:52:25:45:58:89:FB"
-        post_callback_response
       end
 
       it { is_expected.to fail_with(:invalid_ticket) }
     end
 
     context "when the digest is invalid" do
-      let(:params) { { 'SAMLResponse' => load_xml(:digest_mismatch) } }
-
-      before { post_callback_response }
+      let(:xml) { :digest_mismatch }
 
       it { is_expected.to fail_with(:invalid_ticket) }
     end
 
     context "when the signature is invalid" do
-      let(:params) { { 'SAMLResponse' => load_xml(:invalid_signature) } }
-
-      before { post_callback_response }
+      let(:xml) { :invalid_signature }
 
       it { is_expected.to fail_with(:invalid_ticket) }
     end
 
     context "when the response is stale" do
+      let(:xml) { :example_response }
+
       before :each do
         allow(Time).to receive(:now).and_return(Time.utc(2012, 11, 8, 20, 45, 00))
       end
 
       context "without :allowed_clock_drift option" do
-        before { post_callback_response }
-
         it { is_expected.to fail_with(:invalid_ticket) }
       end
 
       context "with :allowed_clock_drift option" do
         before :each do
           saml_options[:allowed_clock_drift] = 60
-          post_callback_response
         end
 
         it { is_expected.to_not fail_with(:invalid_ticket) }
@@ -220,7 +219,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     end
 
     context "when response has custom attributes" do
-      let(:params) { { 'SAMLResponse' => load_xml(:custom_attributes) } }
+      let(:xml) { :custom_attributes }
 
       before :each do
         saml_options[:idp_cert_fingerprint] = "3B:82:F1:F5:54:FC:A8:FF:12:B8:4B:B8:16:61:1D:E4:8E:9B:E2:3C"
@@ -229,6 +228,7 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
           first_name: ["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname"],
           last_name: ["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname"]
         }
+
         post_callback_response
       end
 
@@ -243,11 +243,12 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     end
 
     context "when using custom user id attribute" do
-      let(:params) { { 'SAMLResponse' => load_xml(:custom_attributes) } }
+      let(:xml) { :custom_attributes }
 
       before :each do
         saml_options[:idp_cert_fingerprint] = "3B:82:F1:F5:54:FC:A8:FF:12:B8:4B:B8:16:61:1D:E4:8E:9B:E2:3C"
         saml_options[:uid_attribute] = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
+
         post_callback_response
       end
 
@@ -259,11 +260,10 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
     context "when using custom user id attribute, but it is missing" do
       before :each do
         saml_options[:uid_attribute] = "missing_attribute"
-        post_callback_response
       end
 
       it "should fail to authenticate" do
-        should fail_with(:invalid_ticket)
+        expect(post_callback_response).to fail_with(:invalid_ticket)
         expect(last_request.env['omniauth.error']).to be_instance_of(OmniAuth::Strategies::SAML::ValidationError)
         expect(last_request.env['omniauth.error'].message).to eq("SAML response missing 'missing_attribute' attribute")
       end
@@ -271,27 +271,16 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
   end
 
   describe 'POST /auth/saml/slo' do
-    subject(:post_slo_response) do
-      post "/auth/saml/slo", params, opts
-      last_response
-    end
-
-    let(:params) { {} }
-    let(:opts) { {} }
-
     before do
       saml_options[:sp_entity_id] = "https://idp.sso.example.com/metadata/29490"
     end
 
     context "when response is a logout response" do
-      let(:params) do
-        {
+      before :each do
+        post "/auth/saml/slo", {
           SAMLResponse: load_xml(:example_logout_response),
           RelayState: "https://example.com/",
-        }
-      end
-      let(:opts) do
-        { "rack.session" => {"saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9"} }
+        }, "rack.session" => {"saml_transaction_id" => "_3fef1069-d0c6-418a-b68d-6f008a4787e9"}
       end
 
       it "should redirect to relaystate" do
