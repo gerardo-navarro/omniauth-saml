@@ -296,7 +296,6 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       let(:xml) { :custom_attributes }
 
       before :each do
-        saml_options[:idp_cert_fingerprint] = "3B:82:F1:F5:54:FC:A8:FF:12:B8:4B:B8:16:61:1D:E4:8E:9B:E2:3C"
         saml_options[:attribute_statements] = {
           email: ["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"],
           first_name: ["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname"],
@@ -320,7 +319,6 @@ describe OmniAuth::Strategies::SAML, :type => :strategy do
       let(:xml) { :custom_attributes }
 
       before :each do
-        saml_options[:idp_cert_fingerprint] = "3B:82:F1:F5:54:FC:A8:FF:12:B8:4B:B8:16:61:1D:E4:8E:9B:E2:3C"
         saml_options[:uid_attribute] = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
 
         post_callback_response
